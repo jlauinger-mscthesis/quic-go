@@ -291,7 +291,11 @@ var _ = Describe("Server", func() {
 
 			It("creates a session when the token is accepted", func() {
 				serv.config.AcceptToken = func(_ net.Addr, token *Token) bool { return true }
-				retryToken, err := serv.tokenGenerator.NewRetryToken(&net.UDPAddr{}, protocol.ConnectionID{0xde, 0xad, 0xc0, 0xde}, nil)
+				retryToken, err := serv.tokenGenerator.NewRetryToken(
+					&net.UDPAddr{},
+					protocol.ConnectionID{0xde, 0xad, 0xc0, 0xde},
+					protocol.ConnectionID{0xde, 0xca, 0xfb, 0xad},
+				)
 				Expect(err).ToNot(HaveOccurred())
 				hdr := &wire.Header{
 					IsLongHeader:     true,
@@ -315,6 +319,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					_ sessionRunner,
 					origDestConnID protocol.ConnectionID,
+					retrySrcConnID *protocol.ConnectionID,
 					clientDestConnID protocol.ConnectionID,
 					destConnID protocol.ConnectionID,
 					srcConnID protocol.ConnectionID,
@@ -329,6 +334,7 @@ var _ = Describe("Server", func() {
 				) quicSession {
 					Expect(enable0RTT).To(BeFalse())
 					Expect(origDestConnID).To(Equal(protocol.ConnectionID{0xde, 0xad, 0xc0, 0xde}))
+					Expect(retrySrcConnID).To(Equal(&protocol.ConnectionID{0xde, 0xca, 0xfb, 0xad}))
 					Expect(clientDestConnID).To(Equal(hdr.DestConnectionID))
 					Expect(destConnID).To(Equal(hdr.SrcConnectionID))
 					// make sure we're using a server-generated connection ID
@@ -485,6 +491,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					_ sessionRunner,
 					origDestConnID protocol.ConnectionID,
+					retrySrcConnID *protocol.ConnectionID,
 					clientDestConnID protocol.ConnectionID,
 					destConnID protocol.ConnectionID,
 					srcConnID protocol.ConnectionID,
@@ -499,6 +506,7 @@ var _ = Describe("Server", func() {
 				) quicSession {
 					Expect(enable0RTT).To(BeFalse())
 					Expect(origDestConnID).To(Equal(hdr.DestConnectionID))
+					Expect(retrySrcConnID).To(BeNil())
 					Expect(clientDestConnID).To(Equal(hdr.DestConnectionID))
 					Expect(destConnID).To(Equal(hdr.SrcConnectionID))
 					// make sure we're using a server-generated connection ID
@@ -556,6 +564,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -592,6 +601,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -634,6 +644,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -664,6 +675,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -725,6 +737,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -829,6 +842,7 @@ var _ = Describe("Server", func() {
 					_ connection,
 					runner sessionRunner,
 					_ protocol.ConnectionID,
+					_ *protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
 					_ protocol.ConnectionID,
@@ -848,7 +862,7 @@ var _ = Describe("Server", func() {
 				}
 				phm.EXPECT().GetStatelessResetToken(gomock.Any())
 				phm.EXPECT().Add(gomock.Any(), gomock.Any()).Return(true).Times(2)
-				serv.createNewSession(&net.UDPAddr{}, nil, nil, nil, nil, protocol.VersionWhatever)
+				serv.createNewSession(&net.UDPAddr{}, nil, nil, nil, nil, nil, protocol.VersionWhatever)
 				Consistently(done).ShouldNot(BeClosed())
 				cancel() // complete the handshake
 				Eventually(done).Should(BeClosed())
@@ -892,6 +906,7 @@ var _ = Describe("Server", func() {
 				_ connection,
 				runner sessionRunner,
 				_ protocol.ConnectionID,
+				_ *protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,
@@ -912,7 +927,7 @@ var _ = Describe("Server", func() {
 			}
 			phm.EXPECT().GetStatelessResetToken(gomock.Any())
 			phm.EXPECT().Add(gomock.Any(), sess).Return(true).Times(2)
-			serv.createNewSession(&net.UDPAddr{}, nil, nil, nil, nil, protocol.VersionWhatever)
+			serv.createNewSession(&net.UDPAddr{}, nil, nil, nil, nil, nil, protocol.VersionWhatever)
 			Consistently(done).ShouldNot(BeClosed())
 			close(ready)
 			Eventually(done).Should(BeClosed())
@@ -926,6 +941,7 @@ var _ = Describe("Server", func() {
 				_ connection,
 				runner sessionRunner,
 				_ protocol.ConnectionID,
+				_ *protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,
@@ -981,6 +997,7 @@ var _ = Describe("Server", func() {
 				_ connection,
 				runner sessionRunner,
 				_ protocol.ConnectionID,
+				_ *protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,
 				_ protocol.ConnectionID,

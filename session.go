@@ -113,7 +113,9 @@ type session struct {
 	handshakeDestConnID protocol.ConnectionID
 	// Set for the client. Destination connection ID used on the first Initial sent.
 	origDestConnID protocol.ConnectionID
-	srcConnIDLen   int
+	retrySrcConnID *protocol.ConnectionID // only set for the client (and if a Retry was performed)
+
+	srcConnIDLen int
 
 	perspective    protocol.Perspective
 	initialVersion protocol.VersionNumber // if version negotiation is performed, this is the version we initially tried
@@ -201,6 +203,7 @@ var newSession = func(
 	conn connection,
 	runner sessionRunner,
 	origDestConnID protocol.ConnectionID,
+	retrySrcConnID *protocol.ConnectionID,
 	clientDestConnID protocol.ConnectionID,
 	destConnID protocol.ConnectionID,
 	srcConnID protocol.ConnectionID,
@@ -275,6 +278,7 @@ var newSession = func(
 		OriginalDestinationConnectionID: origDestConnID,
 		ActiveConnectionIDLimit:         protocol.MaxActiveConnectionIDs,
 		InitialSourceConnectionID:       srcConnID,
+		RetrySourceConnectionID:         retrySrcConnID,
 	}
 	if s.qlogger != nil {
 		s.qlogger.SentTransportParameters(params)
@@ -866,7 +870,7 @@ func (s *session) handleRetryPacket(hdr *wire.Header, data []byte) bool /* was t
 		return false
 	}
 
-	s.logger.Debugf("<- Received Retry")
+	s.logger.Debugf("<- Received Retry: %#v", hdr)
 	s.logger.Debugf("Switching destination connection ID to: %s", hdr.SrcConnectionID)
 	if s.qlogger != nil {
 		s.qlogger.ReceivedRetry(hdr)
@@ -878,6 +882,7 @@ func (s *session) handleRetryPacket(hdr *wire.Header, data []byte) bool /* was t
 		return false
 	}
 	s.handshakeDestConnID = newDestConnID
+	s.retrySrcConnID = &newDestConnID
 	s.cryptoStreamHandler.ChangeConnectionID(newDestConnID)
 	s.packer.SetToken(hdr.Token)
 	s.connIDManager.ChangeInitialConnID(newDestConnID)
@@ -1276,6 +1281,12 @@ func (s *session) restoreTransportParameters(params *wire.TransportParameters) {
 }
 
 func (s *session) processTransportParameters(params *wire.TransportParameters) {
+	if err := s.processTransportParametersImpl(params); err != nil {
+		s.closeLocal(err)
+	}
+}
+
+func (s *session) processTransportParametersImpl(params *wire.TransportParameters) error {
 	if s.logger.Debug() {
 		s.logger.Debugf("Processed Transport Parameters: %s", params)
 	}
@@ -1285,14 +1296,24 @@ func (s *session) processTransportParameters(params *wire.TransportParameters) {
 
 	// check the initial_source_connection_id
 	if !params.InitialSourceConnectionID.Equal(s.handshakeDestConnID) {
-		s.closeLocal(qerr.NewError(qerr.TransportParameterError, fmt.Sprintf("expected initial_source_connection_id to equal %s, is %s", s.handshakeDestConnID, params.InitialSourceConnectionID)))
-		return
+		return qerr.NewError(qerr.TransportParameterError, fmt.Sprintf("expected initial_source_connection_id to equal %s, is %s", s.handshakeDestConnID, params.InitialSourceConnectionID))
 	}
 
-	// check the original_destination_connection_id
-	if s.perspective == protocol.PerspectiveClient && !params.OriginalDestinationConnectionID.Equal(s.origDestConnID) {
-		s.closeLocal(qerr.NewError(qerr.TransportParameterError, fmt.Sprintf("expected original_destination_connection_id to equal %s, is %s", s.origDestConnID, params.OriginalDestinationConnectionID)))
-		return
+	if s.perspective == protocol.PerspectiveClient {
+		// check the original_destination_connection_id
+		if !params.OriginalDestinationConnectionID.Equal(s.origDestConnID) {
+			return qerr.NewError(qerr.TransportParameterError, fmt.Sprintf("expected original_destination_connection_id to equal %s, is %s", s.origDestConnID, params.OriginalDestinationConnectionID))
+		}
+		if s.retrySrcConnID != nil { // a Retry was performed
+			if params.RetrySourceConnectionID == nil {
+				return qerr.NewError(qerr.TransportParameterError, "missing retry_source_connection_id")
+			}
+			if !(*params.RetrySourceConnectionID).Equal(*s.retrySrcConnID) {
+				return qerr.NewError(qerr.TransportParameterError, fmt.Sprintf("expected retry_source_connection_id to equal %s, is %s", s.retrySrcConnID, *params.RetrySourceConnectionID))
+			}
+		} else if params.RetrySourceConnectionID != nil {
+			return qerr.NewError(qerr.TransportParameterError, "received retry_source_connection_id, although no Retry was performed")
+		}
 	}
 
 	s.peerParams = params
@@ -1300,8 +1321,7 @@ func (s *session) processTransportParameters(params *wire.TransportParameters) {
 	s.idleTimeout = utils.MinNonZeroDuration(s.config.MaxIdleTimeout, params.MaxIdleTimeout)
 	s.keepAliveInterval = utils.MinDuration(s.idleTimeout/2, protocol.MaxKeepAliveInterval)
 	if err := s.streamsMap.UpdateLimits(params); err != nil {
-		s.closeLocal(err)
-		return
+		return err
 	}
 	s.packer.HandleTransportParameters(params)
 	s.frameParser.SetAckDelayExponent(params.AckDelayExponent)
@@ -1322,6 +1342,7 @@ func (s *session) processTransportParameters(params *wire.TransportParameters) {
 	if s.perspective == protocol.PerspectiveServer {
 		close(s.earlySessionReadyChan)
 	}
+	return nil
 }
 
 func (s *session) sendPackets() error {
